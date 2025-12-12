@@ -1,68 +1,68 @@
-// src/controllers/.js
+// server/src/controllers/authController.js
 import User from "../models/User.js";
 import { generateToken } from "../utils/generateToken.js";
 import { getAuth } from "firebase-admin/auth";
-import admin from "../config/firebaseAdmin.js"; // পরে তৈরি করব
 
-// Register (called from frontend after Firebase email/password)
-export const registerUser = async (req, res) => {
-  const { name, email, photo } = req.body;
+// Firebase দিয়ে লগইন/রেজিস্টার (একই রাউট)
+export const firebaseAuth = async (req, res) => {
+  try {
+    const { idToken } = req.body;
 
-  const userExists = await User.findOne({ email });
-  if (userExists) {
-    // Already registered → just login
-    const token = generateToken(userExists._id);
+    if (!idToken) {
+      return res.status(400).json({ message: "No token provided" });
+    }
+
+    // Firebase token verify
+    const decodedToken = await getAuth().verifyIdToken(idToken);
+    const { uid, email, name, picture } = decodedToken;
+
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      user = await User.create({
+        name: name || email.split("@")[0],
+        email,
+        photo: picture || "https://i.ibb.co/4p0Z1Kv/default-avatar.png",
+        role: email === "admin@publicinfra.com" ? "admin" : "citizen",
+      });
+    }
+
+    const token = generateToken(user._id);
+
     res.cookie("jwt", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
       maxAge: 30 * 24 * 60 * 60 * 1000,
     });
-    return res.status(200).json({
+
+    res.json({
       user: {
-        _id: userExists._id,
-        name: userExists.name,
-        email: userExists.email,
-        photo: userExists.photo,
-        role: userExists.role,
-        isPremium: userExists.isPremium,
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        photo: user.photo,
+        role: user.role,
+        isPremium: user.isPremium || false,
       },
     });
+  } catch (error) {
+    console.error("Firebase auth error:", error);
+    res.status(401).json({ message: "Invalid or expired token" });
   }
-
-  const user = await User.create({
-    name,
-    email,
-    photo: photo || "https://i.ibb.co.com/4p0Z1Kv/default-avatar.png",
-  });
-
-  const token = generateToken(user._id);
-  res.cookie("jwt", token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    maxAge: 30 * 24 * 60 * 60 * 1000,
-  });
-
-  res.status(201).json({
-    user: {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      photo: user.photo,
-      role: user.role,
-      isPremium: user.isPremium,
-    },
-  });
 };
 
-// Get current user (frontend calls this on page load)
+// Current logged in user
 export const getMe = async (req, res) => {
-  res.status(200).json({ user: req.user });
+  res.json({ user: req.user });
 };
 
 // Logout
-export const logoutUser = (req, res) => {
-  res.cookie("jwt", "", { maxAge: 1 });
-  res.status(200).json({ message: "Logged out" });
+export const logoutUser = async (req, res) => {
+  res.clearCookie("jwt", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+  });
+  res.json({ message: "Logged out successfully" });
 };
